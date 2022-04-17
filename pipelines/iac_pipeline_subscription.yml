@@ -1,0 +1,134 @@
+trigger: none
+
+pool:
+  vmImage: windows-latest
+
+variables:
+- template: ./variables.yml
+- group: vg-sample
+- name: ResourceGroupName
+  value: rg-$(BASE_NAME)-$(ENVIRONMENT_SYMBOL)
+- name: BicepFilePath
+  value: $(Build.SourcesDirectory)/src/bicep/azuredeploy_subscription.bicep
+- name: BicepParameterFilePath
+  value: $(Build.SourcesDirectory)/src/bicep/azuredeploy.parameters.json
+- name: KeyVaultName
+  value: kv-$(BASE_NAME)-$(ENVIRONMENT_SYMBOL)
+- name: AppServiceNameCert
+  value: app-c-$(BASE_NAME)-$(ENVIRONMENT_SYMBOL)
+
+parameters:
+- name: PipelineSecrets
+  type: object
+  default:
+    - name: BASIC_AUTH_PASS
+      secret: $(BASIC_AUTH_PASS)
+      kvsecretname: $(KVSECRET_NAME_BASIC_PASS)
+    - name: CLIENT_SECRET
+      secret: $(CLIENT_SECRET)
+      kvsecretname: $(KVSECRET_NAME_CLIENTSECRET)
+
+stages:
+- stage: KeyVault
+  jobs:
+  - ${{ each PipelineSecret in parameters.PipelineSecrets }}:
+    - job: ${{ PipelineSecret.name }}
+      variables:
+        - name: SecretVariableName
+          value: ${{ PipelineSecret.name }}
+      steps:
+      - task: AzurePowerShell@5
+        name: ${{ PipelineSecret.name }}
+        displayName: Set ${{ PipelineSecret.name }} variable
+        env:
+          SecretValue: ${{ PipelineSecret.secret }}
+        inputs:
+          azureSubscription: $(AZURE_SVC_NAME)
+          azurePowerShellVersion: latestVersion
+          ScriptType: InlineScript
+          Inline: |
+            if ( '${{ PipelineSecret.secret }}' -like '*${{ PipelineSecret.name }}*' ){
+              $secretValue = Get-AzKeyVaultSecret -VaultName $env:KeyVaultName -Name '${{ PipelineSecret.kvsecretname }}' -AsPlainText
+              Write-Host "##vso[task.setvariable variable=$env:SecretVariableName;issecret=true;isOutput=true]$secretValue"
+              Write-Host "Input variable $env:SecretVariableName does not exists. $secretValue is set for the later stage."
+            }
+            else{
+              Write-Host "##vso[task.setvariable variable=$env:SecretVariableName;issecret=true;isOutput=true]'${{ PipelineSecret.secret }}'"
+              Write-Host "Input variable $env:SecretVariableName already exists. Use this variable for the later stage."
+            }
+  - job: Certificate
+    steps:
+    - task: AzurePowerShell@5
+      name: TaskCertificate
+      displayName: Create Key Vault, certificate, thumbprint variable
+      inputs:
+        azureSubscription: $(AZURE_SVC_NAME)
+        azurePowerShellVersion: latestVersion
+        errorActionPreference: silentlyContinue
+        ScriptType: InlineScript
+        Inline: |
+          if(!(Get-AzResourceGroup -Name $env:ResourceGroupName)){
+            New-AzResourceGroup -Name $env:ResourceGroupName -Location $env:LOCATION
+          }
+          if(!(Get-AzKeyVault -VaultName $env:KeyVaultName)){
+            $keyVault = New-AzKeyVault -Name $env:KeyVaultName -ResourceGroupName $env:ResourceGroupName -Location $env:LOCATION
+          }
+          Set-AzKeyVaultAccessPolicy -VaultName $env:KeyVaultName -PermissionsToCertificates get,create -ObjectId $env:AAD_OBJECTID_SVC
+          if(!(Get-AzKeyVaultCertificate -VaultName $env:KeyVaultName -Name $env:KVCERT_NAME_API)){
+            $policy = New-AzKeyVaultCertificatePolicy `
+                      -ValidityInMonths 12 `
+                      -SubjectName "CN=$env:AppServiceNameCert" `
+                      -IssuerName self `
+                      -RenewAtNumberOfDaysBeforeExpiry 30
+            Add-AzKeyVaultCertificate -VaultName $env:KeyVaultName -Name $env:KVCERT_NAME_API -CertificatePolicy $policy
+          }
+          Set-AzKeyVaultAccessPolicy -VaultName $env:KeyVaultName -PermissionsToSecrets get -ObjectId $env:AAD_OBJECTID_SVC
+          $thumbprint = (Get-AzKeyVaultCertificate -VaultName $env:KeyVaultName -Name $env:KVCERT_NAME_API).Thumbprint
+          Write-Host "##vso[task.setvariable variable=CertThumbprint;issecret=true;isOutput=true]$thumbprint"
+- stage: Deploy
+  jobs:
+  - job: AzureResourceGroupDeployment
+    timeoutInMinutes: 0
+    variables:
+      - name: BasicAuthPass
+        value: $[ stageDependencies.KeyVault.BASIC_AUTH_PASS.outputs['BASIC_AUTH_PASS.BASIC_AUTH_PASS'] ]
+      - name: ClientSecret
+        value: $[ stageDependencies.KeyVault.CLIENT_SECRET.outputs['CLIENT_SECRET.CLIENT_SECRET'] ]
+      - name: CertThumbprint
+        value: $[ stageDependencies.KeyVault.Certificate.outputs['TaskCertificate.CertThumbprint'] ]
+    steps:
+    - task: AzureCLI@2
+      displayName: Deploy Azure resources
+      env:
+        BasicAuthPass: $(BasicAuthPass)
+        ClientSecret: $(ClientSecret)
+        CertThumbprint: $(CertThumbprint)
+      inputs:
+        azureSubscription: $(AZURE_SVC_NAME)
+        scriptType: ps
+        scriptLocation: inlineScript
+        inlineScript: |
+          az group create --name $(ResourceGroupName) --location $(LOCATION)
+          az deployment group create --resource-group $(ResourceGroupName) --template-file $(BicepFilePath) `
+            --parameters $(BicepParameterFilePath) `
+            base_name=$(BASE_NAME) `
+            environment_symbol=$(ENVIRONMENT_SYMBOL) `
+            aad_objectid_svc=$(AAD_OBJECTID_SVC) `
+            aad_appid_client=$(AAD_APPID_CLIENT) `
+            aad_appid_backend=$(AAD_APPID_BACKEND) `
+            aad_tenantid=$(AAD_TENANTID) `
+            basic_auth_user=$(BASIC_AUTH_USER) `
+            kvcert_name_api=$(KVCERT_NAME_API) `
+            kvsecret_name_basic_pass=$(KVSECRET_NAME_BASIC_PASS) `
+            kvsecret_name_cert_thumbprint=$(KVSECRET_NAME_CERT_THUMBPRINT) `
+            kvsecret_name_clientsecret=$(KVSECRET_NAME_CLIENTSECRET) `
+            kvsecret_name_subscription_key=$(KVSECRET_NAME_SUBSCRIPTION_KEY) `
+            apim_api_name_ad=$(APIM_API_NAME_AD) `
+            apim_api_path_ad=$(APIM_API_PASH_AD) `
+            apim_api_name_basic=$(APIM_API_NAME_BASIC) `
+            apim_api_path_basic=$(APIM_API_PASH_BASIC) `
+            apim_api_name_cert=$(APIM_API_NAME_CERT) `
+            apim_api_path_cert=$(APIM_API_PASH_CERT) `
+            basic_auth_pass=$(BasicAuthPass) `
+            client_secret=$(ClientSecret) `
+            cert_thumbprint=$(CertThumbprint)

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "apim_nv_authserver": { "value": "authorizationServer" },
+    "apim_nv_clientid": { "value": "clientId" },
+    "apim_nv_scope": { "value": "scope" },
+    "apim_nv_clientsecret": { "value": "clientSecret" },
+    "apim_nv_basicauthuser": { "value": "basicAuthUserName" },
+    "apim_nv_basicauthpass": { "value": "basicAuthPass" },
+    "apim_nv_thumbprint": { "value": "certificateThumbprint" },
+    "apim_certificate_id": { "value": "apicert" }
+  }
+}

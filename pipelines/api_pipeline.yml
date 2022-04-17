@@ -1,0 +1,208 @@
+trigger: none
+
+pool:
+  vmImage: windows-2022
+
+variables:
+- template: ./variables.yml
+- group: vg-sample
+- name: ResourceGroupName
+  value: rg-$(BASE_NAME)-$(ENVIRONMENT_SYMBOL)
+- name: APIManagementName
+  value: apim-$(BASE_NAME)-$(ENVIRONMENT_SYMBOL)
+- name: BuildConfiguration
+  value: Release
+- name: DotnetPath
+  value: $(Agent.ToolsDirectory)/dotnet
+- name: KeyVaultName
+  value: kv-$(BASE_NAME)-$(ENVIRONMENT_SYMBOL)
+
+parameters:
+- name: AppServiceInstances
+  type: object
+  default:
+    - name: AzureAdAuth
+      symbol: a
+      api: $(APIM_API_NAME_AD)
+      path: $(APIM_API_PASH_AD)
+    - name: BasicAuth
+      symbol: b
+      api: $(APIM_API_NAME_BASIC)
+      path: $(APIM_API_PASH_BASIC)
+    - name: CertificateAuth
+      symbol: c
+      api: $(APIM_API_NAME_CERT)
+      path: $(APIM_API_PASH_CERT)
+
+stages:
+- ${{ each AppServiceInstance in parameters.AppServiceInstances }}:
+  - stage: ${{ AppServiceInstance.name }}
+    variables:
+    - name: AppServiceName
+      value: app-${{AppServiceInstance.symbol}}-$(BASE_NAME)-$(ENVIRONMENT_SYMBOL)
+    - name: APIManagementSwaggerPath
+      value: $(Build.SourcesDirectory)/src/api/${{AppServiceInstance.name}}/swagger.json
+    - name: APIManagementServiceUrl
+      value: https://$(AppServiceName).azurewebsites.net
+    - name: ProjectPath
+      value: $(Build.SourcesDirectory)/src/api/${{AppServiceInstance.name}}/${{AppServiceInstance.name}}.csproj
+    - name: PuplishPath
+      value: $(Build.SourcesDirectory)/src/api/${{AppServiceInstance.name}}/publish
+    - name: ArtifactName
+      value: ${{AppServiceInstance.name}}
+    jobs:
+    - job: APIManagementDeploy
+      steps:
+      - task: AzureCLI@2
+        displayName: Deploy API to API Management
+        inputs:
+          azureSubscription: $(AZURE_SVC_NAME)
+          scriptType: ps
+          scriptLocation: inlineScript
+          inlineScript: |
+            az apim api import -g $(ResourceGroupName) `
+              --service-name $(APIManagementName) `
+              --api-id ${{AppServiceInstance.api}} `
+              --path ${{AppServiceInstance.path}} `
+              --specification-format OpenApiJson `
+              --specification-path $(APIManagementSwaggerPath) `
+              --service-url $(APIManagementServiceUrl)
+    - job: WebApiBuildDeploy
+      steps:
+      - task: UseDotNet@2
+        displayName: Use .NET 6 sdk
+        inputs:
+          packageType: sdk
+          version: 6.0.x
+          installationPath: $(DotnetPath)
+      - task: DotNetCoreCLI@2
+        displayName: dotnet restore
+        inputs:
+          command: restore
+          projects: $(ProjectPath)
+      - task: DotNetCoreCLI@2
+        displayName: dotnet build
+        inputs:
+          command: build
+          projects: $(ProjectPath)
+          arguments: --configuration $(BuildConfiguration) /WarnAsError
+      - task: DotNetCoreCLI@2
+        displayName: dotnet publish
+        inputs:
+          command: publish
+          projects: $(ProjectPath)
+          publishWebProjects: false
+          zipAfterPublish: true
+          arguments: --configuration $(BuildConfiguration) --output $(PuplishPath)
+      - task: PublishBuildArtifacts@1
+        displayName: Publish build artifacts
+        inputs:
+          PathtoPublish: $(PuplishPath)
+          ArtifactName: $(ArtifactName)
+          publishLocation: Container
+      - task: DownloadBuildArtifacts@0
+        displayName: Download artifacts
+        inputs:
+          buildType: current
+          downloadType: single
+          artifactName: $(ArtifactName)
+          downloadPath: $(Build.StagingDirectory)
+      - task: AzureWebApp@1
+        displayName: Deploy Web App
+        inputs:
+          azureSubscription: $(AZURE_SVC_NAME)
+          appType: webApp
+          appName: $(AppServiceName)
+          package: $(Build.StagingDirectory)/$(ArtifactName)/${{AppServiceInstance.name}}.zip
+      - task: AzureAppServiceManage@0
+        displayName: Restart App Service
+        inputs:
+          azureSubscription: $(AZURE_SVC_NAME)
+          action: Restart Azure App Service
+          webAppName: $(AppServiceName)
+- stage: IntegrationTest
+  jobs:
+  - job: IntegrationTest
+    steps:
+    - ${{ each AppServiceInstance in parameters.AppServiceInstances }}:
+      - task: AzurePowerShell@5
+        continueOnError: true
+        displayName: Integration test - Subscription key - ${{AppServiceInstance.name}}
+        inputs:
+          azureSubscription: $(AZURE_SVC_NAME)
+          azurePowerShellVersion: latestVersion
+          ScriptType: InlineScript
+          Inline: |
+            $subscriptionKey = Get-AzKeyVaultSecret -VaultName $env:KeyVaultName -Name $env:KVSECRET_NAME_SUBSCRIPTION_KEY -AsPlainText
+            $uri = "https://$env:APIManagementName.azure-api.net/${{AppServiceInstance.name}}/Weatherforecast/RequireAuth"
+            echo $uri
+            $headers = @{
+              "Ocp-Apim-Subscription-Key" = $subscriptionKey
+            }
+            Invoke-RestMethod -Uri $uri -Method Get -Headers $headers
+    - task: AzurePowerShell@5
+      continueOnError: true
+      displayName: Integration test - Gateway validation - AzureAdAuth
+      inputs:
+        azureSubscription: $(AZURE_SVC_NAME)
+        azurePowerShellVersion: latestVersion
+        ScriptType: InlineScript
+        Inline: |
+          $clientSecret = Get-AzKeyVaultSecret -VaultName $env:KeyVaultName -Name $env:KVSECRET_NAME_CLIENTSECRET -AsPlainText
+          $authorizeUri = "https://login.microsoftonline.com/$env:AAD_TENANTID/oauth2/v2.0/token"
+          $body = 'grant_type=client_credentials' + `
+          '&client_id=$(AAD_APPID_CLIENT)' + `
+          '&client_secret=' + $clientSecret + `
+          '&scope=api://$(AAD_APPID_BACKEND)/.default'
+          $token = (Invoke-RestMethod -Method Post -Uri $authorizeUri -Body $body).access_token
+          $Uri = "https://$env:APIManagementName.azure-api.net/AzureAdAuth/Weatherforecast/RequireAuth"
+          $headers = @{
+            "Authorization" = 'Bearer ' + $token
+          }
+          Invoke-RestMethod -Uri $Uri -Method Get -Headers $headers
+    - task: AzurePowerShell@5
+      continueOnError: true
+      displayName: Integration test - Gateway validation - BasicAuth
+      inputs:
+        azureSubscription: $(AZURE_SVC_NAME)
+        azurePowerShellVersion: latestVersion
+        ScriptType: InlineScript
+        Inline: |
+          $basicAuthUsername = $env:BASIC_AUTH_USER
+          $basicAuthSecret = Get-AzKeyVaultSecret -VaultName $env:KeyVaultName -Name $env:KVSECRET_NAME_BASIC_PASS -AsPlainText
+          $bytes = [System.Text.Encoding]::ASCII.GetBytes($basicAuthUsername + ':' + $basicAuthSecret)
+          $authHeader = [Convert]::ToBase64String($bytes)
+          $Uri = "https://$env:APIManagementName.azure-api.net/BasicAuth/Weatherforecast/RequireAuth"
+          $headers = @{
+            "Authorization" = 'Basic ' + $authHeader
+          }
+          Invoke-RestMethod -Uri $Uri -Method Get -Headers $headers
+    - task: AzurePowerShell@5
+      continueOnError: true
+      displayName: Integration test - Gateway validation - CertificateAuth
+      inputs:
+        azureSubscription: $(AZURE_SVC_NAME)
+        azurePowerShellVersion: latestVersion
+        ScriptType: InlineScript
+        Inline: |
+          $cert = Get-AzKeyVaultCertificate -VaultName $env:KeyVaultName -Name $env:KVCERT_NAME_API
+          $secret = Get-AzKeyVaultSecret -VaultName $env:KeyVaultName -Name $cert.Name
+          $secretValueText = '';
+          $ssPtr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret.SecretValue)
+          try {
+              $secretValueText = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($ssPtr)
+          } finally {
+              [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ssPtr)
+          }
+          $secretByte = [Convert]::FromBase64String($secretValueText)
+          $x509Cert = new-object System.Security.Cryptography.X509Certificates.X509Certificate2
+          $x509Cert.Import($secretByte, "", "Exportable,PersistKeySet")
+          $type = [System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx
+          $pfxFileByte = $x509Cert.Export($type, $password)
+          [System.IO.File]::WriteAllBytes("KeyVault.pfx", $pfxFileByte)
+          $parameters = @{
+              Method  = "GET"
+              Uri     = "https://$env:APIManagementName.azure-api.net/CertificateAuth/Weatherforecast/RequireAuth"
+              Certificate  = (Get-PfxCertificate "./KeyVault.pfx")
+          }
+          Invoke-RestMethod @parameters

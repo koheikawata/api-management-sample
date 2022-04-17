@@ -1,0 +1,34 @@
+variables:
+  - name: BASE_NAME
+    value: sample
+  - name: ENVIRONMENT_SYMBOL
+    value: dev
+  - name: LOCATION
+    value: japaneast
+## App Service
+  - name: BASIC_AUTH_USER
+    value: sampleuser
+## Key Vault
+  - name: KVCERT_NAME_API
+    value: apicert
+  - name: KVSECRET_NAME_BASIC_PASS
+    value: basicauthpass
+  - name: KVSECRET_NAME_CERT_THUMBPRINT
+    value: certthumbprint
+  - name: KVSECRET_NAME_CLIENTSECRET
+    value: clientsecret
+  - name: KVSECRET_NAME_SUBSCRIPTION_KEY
+    value: subscriptionkey
+## API Management
+  - name: APIM_API_NAME_AD
+    value: AzureAdAuthAPI
+  - name: APIM_API_PASH_AD
+    value: /AzureAdAuth
+  - name: APIM_API_NAME_BASIC
+    value: BasicAuthAPI
+  - name: APIM_API_PASH_BASIC
+    value: /BasicAuth
+  - name: APIM_API_NAME_CERT
+    value: CertificateAuthAPI
+  - name: APIM_API_PASH_CERT
+    value: /CertificateAuth
