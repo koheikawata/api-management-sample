@@ -24,7 +24,9 @@ param client_secret string
 param cert_thumbprint string
 
 param apim_nv_authserver string
-param apim_nv_clientid string
+param apim_nv_clientappid string
+param apim_nv_backendappid string
+param apim_nv_aadtenantid string
 param apim_nv_scope string
 param apim_nv_clientsecret string
 param apim_nv_basicauthuser string
@@ -327,11 +329,27 @@ resource ApiManagementNamedValueAuthServer 'Microsoft.ApiManagement/service/name
   }
 }
 
-resource ApiManagementNamedValueClientId 'Microsoft.ApiManagement/service/namedValues@2021-08-01' = {
-  name: '${ApiManagement.name}/${apim_nv_clientid}'
+resource ApiManagementNamedValueClientAppId 'Microsoft.ApiManagement/service/namedValues@2021-08-01' = {
+  name: '${ApiManagement.name}/${apim_nv_clientappid}'
   properties: {
-    displayName: apim_nv_clientid
+    displayName: apim_nv_clientappid
     value: aad_appid_client
+  }
+}
+
+resource ApiManagementNamedValueBackendAppId 'Microsoft.ApiManagement/service/namedValues@2021-08-01' = {
+  name: '${ApiManagement.name}/${apim_nv_backendappid}'
+  properties: {
+    displayName: apim_nv_backendappid
+    value: aad_appid_backend
+  }
+}
+
+resource ApiManagementNamedValueAadTenantId 'Microsoft.ApiManagement/service/namedValues@2021-08-01' = {
+  name: '${ApiManagement.name}/${apim_nv_aadtenantid}'
+  properties: {
+    displayName: apim_nv_aadtenantid
+    value: aad_tenantid
   }
 }
 
@@ -408,13 +426,12 @@ resource ApiManagementCertificate 'Microsoft.ApiManagement/service/certificates@
 resource ApiManagementPolicyAzureAd 'Microsoft.ApiManagement/service/apis/policies@2021-08-01' = {
   name: '${ApiManagementApiAzureAd.name}/policy'
   dependsOn: [
-    ApiManagementNamedValueAuthServer
-    ApiManagementNamedValueClientId
-    ApiManagementNamedValueScope
-    ApiManagementNamedValueClientSecret
+    ApiManagementNamedValueClientAppId
+    ApiManagementNamedValueBackendAppId
+    ApiManagementNamedValueAadTenantId
   ]
   properties: {
-    value: '<policies>\r\n  <inbound>\r\n    <base />\r\n    <validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized. Access token is missing or invalid.">\r\n      <openid-config url="${environment().authentication.loginEndpoint}${aad_tenantid}/.well-known/openid-configuration" />\r\n      <audiences>\r\n        <audience>api://${aad_appid_backend}</audience>\r\n      </audiences>\r\n      <required-claims>\r\n        <claim name="appid" match="all">\r\n          <value>${aad_appid_client}</value>\r\n        </claim>\r\n      </required-claims>\r\n    </validate-jwt>\r\n   </inbound>\r\n  <backend>\r\n    <base />\r\n  </backend>\r\n  <outbound>\r\n    <base />\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>'
+    value: '<policies>\r\n  <inbound>\r\n    <base />\r\n    <validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized. Access token is missing or invalid.">\r\n      <openid-config url="${environment().authentication.loginEndpoint}{{${apim_nv_aadtenantid}}}/.well-known/openid-configuration" />\r\n      <audiences>\r\n        <audience>api://{{${apim_nv_backendappid}}}</audience>\r\n      </audiences>\r\n      <required-claims>\r\n        <claim name="appid" match="all">\r\n          <value>{{${apim_nv_clientappid}}}</value>\r\n        </claim>\r\n      </required-claims>\r\n    </validate-jwt>\r\n   </inbound>\r\n  <backend>\r\n    <base />\r\n  </backend>\r\n  <outbound>\r\n    <base />\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>'
     format: 'xml'
   }
 }
@@ -434,6 +451,7 @@ resource ApiManagementPolicyBasic 'Microsoft.ApiManagement/service/apis/policies
 resource ApiManagementPolicyCert 'Microsoft.ApiManagement/service/apis/policies@2021-08-01' = {
   name: '${ApiManagementApiCert.name}/policy'
   dependsOn: [
+    ApiManagementNamedValueThumbprint
     ApiManagementCertificate
   ]
   properties: {

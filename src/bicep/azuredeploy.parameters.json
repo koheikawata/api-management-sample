@@ -3,7 +3,9 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "apim_nv_authserver": { "value": "authorizationServer" },
-    "apim_nv_clientid": { "value": "clientId" },
+    "apim_nv_clientappid": { "value": "clientAppId" },
+    "apim_nv_backendappid": { "value": "backendAppId" },
+    "apim_nv_aadtenantid": { "value": "aadTenantId" },
     "apim_nv_scope": { "value": "scope" },
     "apim_nv_clientsecret": { "value": "clientSecret" },
     "apim_nv_basicauthuser": { "value": "basicAuthUserName" },

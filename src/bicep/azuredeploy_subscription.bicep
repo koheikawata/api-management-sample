@@ -24,7 +24,9 @@ param client_secret string
 param cert_thumbprint string
 
 param apim_nv_authserver string
-param apim_nv_clientid string
+param apim_nv_clientappid string
+param apim_nv_backendappid string
+param apim_nv_aadtenantid string
 param apim_nv_scope string
 param apim_nv_clientsecret string
 param apim_nv_basicauthuser string
@@ -327,11 +329,27 @@ resource ApiManagementNamedValueAuthServer 'Microsoft.ApiManagement/service/name
   }
 }
 
-resource ApiManagementNamedValueClientId 'Microsoft.ApiManagement/service/namedValues@2021-08-01' = {
-  name: '${ApiManagement.name}/${apim_nv_clientid}'
+resource ApiManagementNamedValueClientAppId 'Microsoft.ApiManagement/service/namedValues@2021-08-01' = {
+  name: '${ApiManagement.name}/${apim_nv_clientappid}'
   properties: {
-    displayName: apim_nv_clientid
+    displayName: apim_nv_clientappid
     value: aad_appid_client
+  }
+}
+
+resource ApiManagementNamedValueBackendAppId 'Microsoft.ApiManagement/service/namedValues@2021-08-01' = {
+  name: '${ApiManagement.name}/${apim_nv_backendappid}'
+  properties: {
+    displayName: apim_nv_backendappid
+    value: aad_appid_backend
+  }
+}
+
+resource ApiManagementNamedValueAadTenantId 'Microsoft.ApiManagement/service/namedValues@2021-08-01' = {
+  name: '${ApiManagement.name}/${apim_nv_aadtenantid}'
+  properties: {
+    displayName: apim_nv_aadtenantid
+    value: aad_tenantid
   }
 }
 
@@ -409,12 +427,12 @@ resource ApiManagementPolicyAzureAd 'Microsoft.ApiManagement/service/apis/polici
   name: '${ApiManagementApiAzureAd.name}/policy'
   dependsOn: [
     ApiManagementNamedValueAuthServer
-    ApiManagementNamedValueClientId
+    ApiManagementNamedValueClientAppId
     ApiManagementNamedValueScope
     ApiManagementNamedValueClientSecret
   ]
   properties: {
-    value: '<policies>\r\n  <inbound>\r\n    <base />\r\n    <send-request ignore-error="true" timeout="20" response-variable-name="bearerToken" mode="new">\r\n      <set-url>{{${apim_nv_authserver}}}</set-url>\r\n      <set-method>POST</set-method>\r\n      <set-header name="Content-Type" exists-action="override">\r\n        <value>application/x-www-form-urlencoded</value>\r\n      </set-header>\r\n      <set-body>\r\n          @{\r\n              return "client_id={{${apim_nv_clientid}}}&amp;scope={{${apim_nv_scope}}}&amp;client_secret={{${apim_nv_clientsecret}}}&amp;grant_type=client_credentials";\r\n          }\r\n        </set-body>\r\n    </send-request>\r\n    <set-header name="Authorization" exists-action="override">\r\n      <value>\r\n          @("Bearer " + (String)((IResponse)context.Variables["bearerToken"]).Body.As&lt;JObject&gt;()["access_token"])\r\n      </value>\r\n    </set-header>\r\n    <set-header exists-action="delete" name="Ocp-Apim-Subscription-Key" />\r\n  </inbound>\r\n  <backend>\r\n    <base />\r\n  </backend>\r\n  <outbound>\r\n    <base />\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>'
+    value: '<policies>\r\n  <inbound>\r\n    <base />\r\n    <send-request ignore-error="true" timeout="20" response-variable-name="bearerToken" mode="new">\r\n      <set-url>{{${apim_nv_authserver}}}</set-url>\r\n      <set-method>POST</set-method>\r\n      <set-header name="Content-Type" exists-action="override">\r\n        <value>application/x-www-form-urlencoded</value>\r\n      </set-header>\r\n      <set-body>\r\n          @{\r\n              return "client_id={{${apim_nv_clientappid}}}&amp;scope={{${apim_nv_scope}}}&amp;client_secret={{${apim_nv_clientsecret}}}&amp;grant_type=client_credentials";\r\n          }\r\n        </set-body>\r\n    </send-request>\r\n    <set-header name="Authorization" exists-action="override">\r\n      <value>\r\n          @("Bearer " + (String)((IResponse)context.Variables["bearerToken"]).Body.As&lt;JObject&gt;()["access_token"])\r\n      </value>\r\n    </set-header>\r\n    <set-header exists-action="delete" name="Ocp-Apim-Subscription-Key" />\r\n  </inbound>\r\n  <backend>\r\n    <base />\r\n  </backend>\r\n  <outbound>\r\n    <base />\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>'
     format: 'xml'
   }
 }

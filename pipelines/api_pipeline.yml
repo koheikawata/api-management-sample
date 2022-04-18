@@ -135,7 +135,6 @@ stages:
           Inline: |
             $subscriptionKey = Get-AzKeyVaultSecret -VaultName $env:KeyVaultName -Name $env:KVSECRET_NAME_SUBSCRIPTION_KEY -AsPlainText
             $uri = "https://$env:APIManagementName.azure-api.net/${{AppServiceInstance.name}}/Weatherforecast/RequireAuth"
-            echo $uri
             $headers = @{
               "Ocp-Apim-Subscription-Key" = $subscriptionKey
             }
