@@ -12,6 +12,9 @@ appsettings.Development.json
 *.crt
 *.pfx
 
+# tool manifest
+dotnet-tools.json
+
 # User-specific files
 *.rsuser
 *.suo

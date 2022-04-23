@@ -32,3 +32,8 @@ variables:
     value: CertificateAuthAPI
   - name: APIM_API_PASH_CERT
     value: /CertificateAuth
+## Version
+  - name: DotnetVersion
+    value: 6.0.x
+  - name: SwashbuckleVersion
+    value: 6.3.1

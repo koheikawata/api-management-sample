@@ -16,6 +16,8 @@ variables:
   value: $(Agent.ToolsDirectory)/dotnet
 - name: KeyVaultName
   value: kv-$(BASE_NAME)-$(ENVIRONMENT_SYMBOL)
+- name: SwaggerVersion
+  value: v1
 
 parameters:
 - name: AppServiceInstances
@@ -40,40 +42,28 @@ stages:
     variables:
     - name: AppServiceName
       value: app-${{AppServiceInstance.symbol}}-$(BASE_NAME)-$(ENVIRONMENT_SYMBOL)
-    - name: APIManagementSwaggerPath
-      value: $(Build.SourcesDirectory)/src/api/${{AppServiceInstance.name}}/swagger.json
     - name: APIManagementServiceUrl
       value: https://$(AppServiceName).azurewebsites.net
+    - name: ApiDirectory
+      value: $(Build.SourcesDirectory)/src/api/${{AppServiceInstance.name}}
     - name: ProjectPath
-      value: $(Build.SourcesDirectory)/src/api/${{AppServiceInstance.name}}/${{AppServiceInstance.name}}.csproj
+      value: $(ApiDirectory)/${{AppServiceInstance.name}}.csproj
     - name: PuplishPath
-      value: $(Build.SourcesDirectory)/src/api/${{AppServiceInstance.name}}/publish
+      value: $(ApiDirectory)/publish
+    - name: DllPath
+      value: $(ApiDirectory)/bin/$(BuildConfiguration)/net6.0/${{AppServiceInstance.name}}.dll
+    - name: SwaggerPath
+      value: $(ApiDirectory)/swagger.json
     - name: ArtifactName
       value: ${{AppServiceInstance.name}}
     jobs:
-    - job: APIManagementDeploy
-      steps:
-      - task: AzureCLI@2
-        displayName: Deploy API to API Management
-        inputs:
-          azureSubscription: $(AZURE_SVC_NAME)
-          scriptType: ps
-          scriptLocation: inlineScript
-          inlineScript: |
-            az apim api import -g $(ResourceGroupName) `
-              --service-name $(APIManagementName) `
-              --api-id ${{AppServiceInstance.api}} `
-              --path ${{AppServiceInstance.path}} `
-              --specification-format OpenApiJson `
-              --specification-path $(APIManagementSwaggerPath) `
-              --service-url $(APIManagementServiceUrl)
-    - job: WebApiBuildDeploy
+    - job: WebApiDeploy
       steps:
       - task: UseDotNet@2
         displayName: Use .NET 6 sdk
         inputs:
           packageType: sdk
-          version: 6.0.x
+          version: $(DotnetVersion)
           installationPath: $(DotnetPath)
       - task: DotNetCoreCLI@2
         displayName: dotnet restore
@@ -86,6 +76,41 @@ stages:
           command: build
           projects: $(ProjectPath)
           arguments: --configuration $(BuildConfiguration) /WarnAsError
+      - task: DotNetCoreCLI@2
+        displayName: dotnet new tool-manifest
+        inputs:
+          command: custom
+          custom: new
+          arguments: tool-manifest
+          workingDirectory: $(ApiDirectory)
+      - task: DotNetCoreCLI@2
+        displayName: dotnet tool install
+        inputs:
+          command: custom
+          custom: tool
+          arguments: install Swashbuckle.AspNetCore.Cli --version $(SwashbuckleVersion)
+          workingDirectory: $(ApiDirectory)
+      - task: DotNetCoreCLI@2
+        displayName: dotnet swagger tofile
+        inputs:
+          command: custom
+          custom: swagger
+          arguments: tofile --output $(SwaggerPath) $(DllPath) $(SwaggerVersion)
+          workingDirectory: $(ApiDirectory)
+      - task: AzureCLI@2
+        displayName: Deploy API to API Management
+        inputs:
+          azureSubscription: $(AZURE_SVC_NAME)
+          scriptType: ps
+          scriptLocation: inlineScript
+          inlineScript: |
+            az apim api import -g $(ResourceGroupName) `
+              --service-name $(APIManagementName) `
+              --api-id ${{AppServiceInstance.api}} `
+              --path ${{AppServiceInstance.path}} `
+              --specification-format OpenApiJson `
+              --specification-path $(SwaggerPath) `
+              --service-url $(APIManagementServiceUrl)
       - task: DotNetCoreCLI@2
         displayName: dotnet publish
         inputs:
